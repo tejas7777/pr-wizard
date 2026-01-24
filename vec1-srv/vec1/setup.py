@@ -21,7 +21,7 @@ from vec1.infra import (
 
 
 def _hash_content(content: str) -> str:
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _count_tokens(content: str) -> int:
@@ -79,16 +79,16 @@ def main() -> None:
 
 
 def _build_logger(settings: Settings):
-    if settings.logging.backend == 'console':
+    if settings.logging.backend == "console":
         return ConsoleLogger(settings.logging.name)
-    if settings.logging.backend == 'logfire':
+    if settings.logging.backend == "logfire":
         if not settings.logging.logfire_token:
             raise ValueError(
-                'Logfire backend selected but VEC1_LOGFIRE_TOKEN is not set'
+                "Logfire backend selected but VEC1_LOGFIRE_TOKEN is not set"
             )
         configure_logfire(settings.logging.logfire_token)
         return LogfireLogger(settings.logging.name)
-    raise ValueError(f'Unknown logging backend {settings.logging.backend}')
+    raise ValueError(f"Unknown logging backend {settings.logging.backend}")
 
 
 def _run_jobs(
@@ -98,14 +98,14 @@ def _run_jobs(
 ) -> None:
     chunk_thread = threading.Thread(
         target=chunking_job.run,
-        name='ChunkingJob',
+        name="ChunkingJob",
         daemon=True,
     )
     chunk_thread.start()
     try:
         polling_job.run()
     except KeyboardInterrupt:
-        logger.info('Shutdown requested')
+        logger.info("Shutdown requested")
     finally:
         polling_job.stop()
         chunking_job.stop()

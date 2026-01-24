@@ -5,7 +5,7 @@ from vec1.core.ports.state_store import StateStore
 
 
 class PollingStateStore(PollingState):
-    _LAST_POLLED_KEY = 'polling.last_polled'
+    _LAST_POLLED_KEY = "polling.last_polled"
 
     def __init__(self, state_store: StateStore) -> None:
         self._state_store = state_store

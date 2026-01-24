@@ -50,20 +50,20 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    github_token = _ge_env_or_default('GITHUB_TOKEN')
-    github_owner = _ge_env_or_default('VEC1_REPO_OWNER')
-    github_repo = _ge_env_or_default('VEC1_REPO_NAME')
+    github_token = _ge_env_or_default("GITHUB_TOKEN")
+    github_owner = _ge_env_or_default("VEC1_REPO_OWNER")
+    github_repo = _ge_env_or_default("VEC1_REPO_NAME")
 
-    logging_backend = os.getenv('VEC1_LOGGER_BACKEND', 'console').lower()
-    logging_name = os.getenv('VEC1_LOGGER_NAME', 'vec1')
-    logfire_token = os.getenv('VEC1_LOGFIRE_TOKEN')
+    logging_backend = os.getenv("VEC1_LOGGER_BACKEND", "console").lower()
+    logging_name = os.getenv("VEC1_LOGGER_NAME", "vec1")
+    logfire_token = os.getenv("VEC1_LOGFIRE_TOKEN")
 
-    queue_max_size = _env_optional_int('VEC1_QUEUE_MAX_SIZE')
-    diff_max_tokens = _env_int('VEC1_DIFF_MAX_TOKENS', 2000)
-    poll_interval = _env_float('VEC1_POLL_INTERVAL', 60.0)
-    chunk_get_timeout = _env_float('VEC1_CHUNK_GET_TIMEOUT', 1.0)
-    default_lookback_hours = _env_int('VEC1_DEFAULT_LOOKBACK_HOURS', 24)
-    state_dir = os.getenv('VEC1_STATE_DIR', '.vec1/state')
+    queue_max_size = _env_optional_int("VEC1_QUEUE_MAX_SIZE")
+    diff_max_tokens = _env_int("VEC1_DIFF_MAX_TOKENS", 2000)
+    poll_interval = _env_float("VEC1_POLL_INTERVAL", 60.0)
+    chunk_get_timeout = _env_float("VEC1_CHUNK_GET_TIMEOUT", 1.0)
+    default_lookback_hours = _env_int("VEC1_DEFAULT_LOOKBACK_HOURS", 24)
+    state_dir = os.getenv("VEC1_STATE_DIR", ".vec1/state")
 
     return Settings(
         github=GitHubSettings(
@@ -87,7 +87,7 @@ def load_settings() -> Settings:
     )
 
 
-def _ge_env_or_default(name: str, default: str = '') -> str:
+def _ge_env_or_default(name: str, default: str = "") -> str:
     value = os.getenv(name)
     if not value:
         return default

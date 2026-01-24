@@ -22,12 +22,19 @@ from vec1.core.schema.pr import (
 from vec1.infra.github.client import GitHubClient
 
 
-STATUS_OPEN = 'open'
-STATUS_CLOSED = 'closed'
-STATUS_ALL = 'all'
+STATUS_OPEN = "open"
+STATUS_CLOSED = "closed"
+STATUS_ALL = "all"
+
 
 class GitHubPRSource(PRSource):
-    def __init__(self, client: GitHubClient, owner: str, repo: str, pr_status: List[str] = [STATUS_CLOSED]) -> None:
+    def __init__(
+        self,
+        client: GitHubClient,
+        owner: str,
+        repo: str,
+        pr_status: List[str] = [STATUS_CLOSED],
+    ) -> None:
         self._client = client
         self._owner = owner
         self._repo_name = repo
@@ -39,14 +46,14 @@ class GitHubPRSource(PRSource):
         try:
             pulls = repo.get_pulls(
                 state=STATUS_ALL,
-                sort='updated',
-                direction='desc',
+                sort="updated",
+                direction="desc",
             )
         except GithubException as error:
             self._translate_exception(
-                'Failed to fetch pull requests',
+                "Failed to fetch pull requests",
                 error,
-                resource=f'{self._owner}/{self._repo_name}',
+                resource=f"{self._owner}/{self._repo_name}",
             )
         else:
             for pr in pulls:
@@ -56,7 +63,7 @@ class GitHubPRSource(PRSource):
 
     def _build_fetched_pr(self, pr) -> FetchedPR:
         identifier = PRIdentifier(
-            source='github',
+            source="github",
             owner=self._owner,
             repo=self._repo_name,
             pr_number=pr.number,
@@ -66,19 +73,18 @@ class GitHubPRSource(PRSource):
             files_changed = tuple(file.filename for file in files)
             diffs = tuple(self._to_diff(file) for file in files)
             review_comments = tuple(
-                self._to_review_comment(comment)
-                for comment in pr.get_review_comments()
+                self._to_review_comment(comment) for comment in pr.get_review_comments()
             )
 
             metadata = PRMetadata(
                 identifier=identifier,
-                title=pr.title or '',
+                title=pr.title or "",
                 description=pr.body,
-                author=pr.user.login if pr.user else '',
+                author=pr.user.login if pr.user else "",
                 created_at=pr.created_at,
                 merged_at=pr.merged_at,
-                base_branch=pr.base.ref if pr.base else '',
-                head_branch=pr.head.ref if pr.head else '',
+                base_branch=pr.base.ref if pr.base else "",
+                head_branch=pr.head.ref if pr.head else "",
                 files_changed=files_changed,
             )
             return FetchedPR(
@@ -88,12 +94,12 @@ class GitHubPRSource(PRSource):
             )
         except GithubException as error:
             raise PRFetchError(
-                'Failed to fetch pull request details',
+                "Failed to fetch pull request details",
                 identifier,
             ) from error
 
     def _to_diff(self, file) -> PRDiff:
-        patch = file.patch if file.patch is not None else ''
+        patch = file.patch if file.patch is not None else ""
         return PRDiff(
             file_path=file.filename,
             patch=patch,
@@ -107,7 +113,7 @@ class GitHubPRSource(PRSource):
             body=comment.body,
             path=comment.path,
             created_at=comment.created_at,
-            author=comment.user.login if comment.user else '',
+            author=comment.user.login if comment.user else "",
         )
 
     def _get_repo(self) -> Repository:
@@ -119,9 +125,9 @@ class GitHubPRSource(PRSource):
                 )
             except GithubException as error:
                 self._translate_exception(
-                    'Failed to access repository',
+                    "Failed to access repository",
                     error,
-                    resource=f'{self._owner}/{self._repo_name}',
+                    resource=f"{self._owner}/{self._repo_name}",
                 )
         assert self._repo is not None
         return self._repo
@@ -132,14 +138,14 @@ class GitHubPRSource(PRSource):
         error: GithubException,
         resource: str | None = None,
     ) -> None:
-        status = getattr(error, 'status', None)
-        headers = getattr(error, 'headers', {}) or {}
+        status = getattr(error, "status", None)
+        headers = getattr(error, "headers", {}) or {}
         if status == 401:
             raise SourceAuthenticationError(message) from error
         if status == 404:
             raise SourceNotFoundError(
                 message,
-                resource or 'resource',
+                resource or "resource",
             ) from error
         if status == 403:
             retry_after = self._retry_after_from_headers(headers)
@@ -147,10 +153,8 @@ class GitHubPRSource(PRSource):
                 raise SourceRateLimitError(message, retry_after) from error
         raise SourceError(message) from error
 
-    def _retry_after_from_headers(
-        self, headers
-    ) -> datetime | None:  # noqa: ANN001
-        reset = headers.get('Retry-After') or headers.get('X-RateLimit-Reset')
+    def _retry_after_from_headers(self, headers) -> datetime | None:  # noqa: ANN001
+        reset = headers.get("Retry-After") or headers.get("X-RateLimit-Reset")
         if reset is None:
             return None
         try:

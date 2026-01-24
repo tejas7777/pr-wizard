@@ -22,7 +22,7 @@ class BaseJob(ABC):
     def run(self) -> None:
         job_name = self.__class__.__name__
         self._running = True
-        self._logger.info('Job starting', job=job_name)
+        self._logger.info("Job starting", job=job_name)
         try:
             self.setup()
             while self._running and self.should_continue():
@@ -37,23 +37,20 @@ class BaseJob(ABC):
                 self.teardown()
             finally:
                 self._running = False
-                self._logger.info('Job stopping', job=job_name)
+                self._logger.info("Job stopping", job=job_name)
 
     @abstractmethod
-    def setup(self) -> None:
-        ...
+    def setup(self) -> None: ...
 
     @abstractmethod
-    def execute_once(self) -> None:
-        ...
+    def execute_once(self) -> None: ...
 
     @abstractmethod
-    def teardown(self) -> None:
-        ...
+    def teardown(self) -> None: ...
 
     def handle_error(self, error: Vec1Error) -> None:
         self._logger.exception(
-            'Job error',
+            "Job error",
             error=str(error),
             job=self.__class__.__name__,
         )

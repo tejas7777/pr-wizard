@@ -22,21 +22,18 @@ class ChunkingJob(BaseJob):
         input_queue: Queue[FetchedPR],
         output_queue: Queue[Chunk],
         chunkers: Sequence[BaseChunker],
-        *,
-        get_timeout: float,
     ) -> None:
         super().__init__(logger, poll_interval=0, clock=clock)
         self._input_queue = input_queue
         self._output_queue = output_queue
         self._chunkers = list(chunkers)
-        self._get_timeout = get_timeout
 
     def setup(self) -> None:
         if not self._chunkers:
-            raise ChunkerError('No chunkers configured')
+            raise ChunkerError("No chunkers configured")
 
     def execute_once(self) -> None:
-        message = self._input_queue.get(timeout=self._get_timeout)
+        message = self._input_queue.get()
         if message is None:
             return
 
@@ -51,7 +48,7 @@ class ChunkingJob(BaseJob):
                     chunk_count += 1
             self._input_queue.ack(message)
             self._logger.info(
-                'Chunked pull request',
+                "Chunked pull request",
                 pr_identifier=asdict(pr_identifier),
                 chunk_count=chunk_count,
             )
@@ -71,7 +68,7 @@ class ChunkingJob(BaseJob):
         requeue = message.attempt_count < MAX_CHUNK_ATTEMPTS
         self._input_queue.nack(message, requeue=requeue)
         self._logger.exception(
-            'Chunking failed',
+            "Chunking failed",
             pr_identifier=asdict(pr_identifier),
             attempt_count=message.attempt_count,
             requeue=requeue,

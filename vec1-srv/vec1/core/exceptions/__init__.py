@@ -14,16 +14,16 @@ from vec1.core.exceptions.errors import (
 )
 
 __all__ = [
-    'Vec1Error',
-    'SourceError',
-    'SourceAuthenticationError',
-    'SourceRateLimitError',
-    'SourceNotFoundError',
-    'PRFetchError',
-    'QueueError',
-    'QueueFullError',
-    'QueueTimeoutError',
-    'ChunkerError',
-    'ChunkingFailedError',
-    'ChunkTooLargeError',
+    "Vec1Error",
+    "SourceError",
+    "SourceAuthenticationError",
+    "SourceRateLimitError",
+    "SourceNotFoundError",
+    "PRFetchError",
+    "QueueError",
+    "QueueFullError",
+    "QueueTimeoutError",
+    "ChunkerError",
+    "ChunkingFailedError",
+    "ChunkTooLargeError",
 ]

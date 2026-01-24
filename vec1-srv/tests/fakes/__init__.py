@@ -5,9 +5,9 @@ from tests.fakes.queue import FakeQueue
 from tests.fakes.state_store import FakeStateStore
 
 __all__ = [
-    'FakeLogger',
-    'FakeQueue',
-    'FakePRSource',
-    'FakeClock',
-    'FakeStateStore',
+    "FakeLogger",
+    "FakeQueue",
+    "FakePRSource",
+    "FakeClock",
+    "FakeStateStore",
 ]

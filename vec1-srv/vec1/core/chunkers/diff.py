@@ -6,7 +6,7 @@ from vec1.core.schema.chunk import Chunk, ChunkType
 from vec1.core.schema.pr import FetchedPR
 
 DEFAULT_MAX_TOKENS = 2000
-_HUNK_SPLIT_PATTERN = re.compile(r'\n(?=@@)')
+_HUNK_SPLIT_PATTERN = re.compile(r"\n(?=@@)")
 
 
 class DiffChunker(BaseChunker):
@@ -31,8 +31,8 @@ class DiffChunker(BaseChunker):
                     content=patch,
                     file_path=diff.file_path,
                     metadata={
-                        'additions': diff.additions,
-                        'deletions': diff.deletions,
+                        "additions": diff.additions,
+                        "deletions": diff.deletions,
                     },
                 )
                 continue
@@ -41,10 +41,10 @@ class DiffChunker(BaseChunker):
             hunk_count = len(hunks)
             for index, hunk in enumerate(hunks, start=1):
                 hunk_metadata = {
-                    'additions': diff.additions,
-                    'deletions': diff.deletions,
-                    'hunk_index': index,
-                    'hunk_count': hunk_count,
+                    "additions": diff.additions,
+                    "deletions": diff.deletions,
+                    "hunk_index": index,
+                    "hunk_count": hunk_count,
                 }
                 yield self._make_chunk(
                     pr_identifier=fetched_pr.metadata.identifier,

@@ -36,7 +36,7 @@ class PollingJob(BaseJob):
                 hours=self._default_lookback_hours
             )
         self._logger.info(
-            'Polling initialized',
+            "Polling initialized",
             last_polled=self._last_polled.isoformat(),
         )
 
@@ -49,7 +49,7 @@ class PollingJob(BaseJob):
         self._last_polled = self._clock.now()
         self._polling_state.store_last_polled(self._last_polled)
         self._logger.info(
-            'Polling cycle complete',
+            "Polling cycle complete",
             processed=count,
             last_polled=self._last_polled.isoformat(),
         )

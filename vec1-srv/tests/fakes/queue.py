@@ -6,7 +6,7 @@ from vec1.core.ports.clock import Clock
 from vec1.core.ports.queue import Queue
 from vec1.core.schema.queue import QueueMessage
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class FakeQueue(Generic[T], Queue[T]):
@@ -22,7 +22,7 @@ class FakeQueue(Generic[T], Queue[T]):
 
     def put(self, item: T) -> None:
         if self._max_size is not None and len(self._items) >= self._max_size:
-            raise QueueFullError('Queue is full')
+            raise QueueFullError("Queue is full")
         enqueued_at = self._now()
         message = QueueMessage(
             payload=item,
@@ -32,9 +32,7 @@ class FakeQueue(Generic[T], Queue[T]):
         )
         self._items.append(message)
 
-    def get(
-        self, timeout: Optional[float] = None
-    ) -> Optional[QueueMessage[T]]:  # noqa: ARG002
+    def get(self, timeout: Optional[float] = None) -> Optional[QueueMessage[T]]:  # noqa: ARG002
         if not self._items:
             return None
         message = self._items.pop(0)
@@ -64,4 +62,4 @@ class FakeQueue(Generic[T], Queue[T]):
         return datetime.now(timezone.utc)
 
     def _new_message_id(self) -> str:
-        return f'fake-{len(self._items) + len(self._pending)}'
+        return f"fake-{len(self._items) + len(self._pending)}"

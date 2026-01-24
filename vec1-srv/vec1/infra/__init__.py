@@ -5,13 +5,13 @@ from vec1.infra.queue import MemoryQueue
 from vec1.infra.state import FileStateStore, PollingStateStore
 
 __all__ = [
-    'GitHubClient',
-    'GitHubPRSource',
-    'MemoryQueue',
-    'ConsoleLogger',
-    'LogfireLogger',
-    'configure_logfire',
-    'SystemClock',
-    'FileStateStore',
-    'PollingStateStore',
+    "GitHubClient",
+    "GitHubPRSource",
+    "MemoryQueue",
+    "ConsoleLogger",
+    "LogfireLogger",
+    "configure_logfire",
+    "SystemClock",
+    "FileStateStore",
+    "PollingStateStore",
 ]

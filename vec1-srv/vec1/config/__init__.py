@@ -10,12 +10,12 @@ from vec1.config.settings import (
 )
 
 __all__ = [
-    'Settings',
-    'GitHubSettings',
-    'LoggingSettings',
-    'QueueSettings',
-    'ChunkerSettings',
-    'JobSettings',
-    'StateSettings',
-    'load_settings',
+    "Settings",
+    "GitHubSettings",
+    "LoggingSettings",
+    "QueueSettings",
+    "ChunkerSettings",
+    "JobSettings",
+    "StateSettings",
+    "load_settings",
 ]

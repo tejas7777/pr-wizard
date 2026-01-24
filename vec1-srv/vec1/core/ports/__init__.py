@@ -6,10 +6,10 @@ from vec1.core.ports.queue import Queue
 from vec1.core.ports.state_store import StateStore
 
 __all__ = [
-    'Logger',
-    'Queue',
-    'PRSource',
-    'Clock',
-    'PollingState',
-    'StateStore',
+    "Logger",
+    "Queue",
+    "PRSource",
+    "Clock",
+    "PollingState",
+    "StateStore",
 ]

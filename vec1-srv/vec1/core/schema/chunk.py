@@ -6,9 +6,9 @@ from vec1.core.schema.pr import PRIdentifier
 
 
 class ChunkType(Enum):
-    SUMMARY = 'summary'
-    DIFF = 'diff'
-    REVIEW_COMMENT = 'review_comment'
+    SUMMARY = "summary"
+    DIFF = "diff"
+    REVIEW_COMMENT = "review_comment"
 
 
 @dataclass(frozen=True, slots=True)

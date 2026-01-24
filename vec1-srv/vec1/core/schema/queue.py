@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Generic, Optional, TypeVar
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,3 +12,4 @@ class QueueMessage(Generic[T]):
     enqueued_at: datetime
     attempt_count: int
     message_id: str
+    stream_id: Optional[str] = None

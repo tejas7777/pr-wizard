@@ -10,16 +10,16 @@ class DescriptionChunker(BaseChunker):
         metadata = fetched_pr.metadata
         content_parts = [metadata.title]
         if metadata.description:
-            content_parts.append('')
+            content_parts.append("")
             content_parts.append(metadata.description)
-        content = '\n'.join(content_parts)
+        content = "\n".join(content_parts)
         chunk_metadata = {
-            'author': metadata.author,
-            'created_at': metadata.created_at,
-            'merged_at': metadata.merged_at,
-            'base_branch': metadata.base_branch,
-            'head_branch': metadata.head_branch,
-            'files_changed': metadata.files_changed,
+            "author": metadata.author,
+            "created_at": metadata.created_at,
+            "merged_at": metadata.merged_at,
+            "base_branch": metadata.base_branch,
+            "head_branch": metadata.head_branch,
+            "files_changed": metadata.files_changed,
         }
         yield self._make_chunk(
             pr_identifier=metadata.identifier,

@@ -7,7 +7,7 @@ def _load_logfire():
     try:
         import logfire
     except ImportError as error:
-        raise RuntimeError('logfire library is not installed') from error
+        raise RuntimeError("logfire library is not installed") from error
     return logfire
 
 

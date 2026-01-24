@@ -7,10 +7,12 @@ requires-python = ">=3.12"
 dependencies = [
     "PyGithub",
     "logfire",
+    "redis",
 ]
 
 [dependency-groups]
-dev = ["ruff", "pytest"]
+dev = ["ruff", "pytest", "fakeredis"]
+test = ["pytest", "fakeredis"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

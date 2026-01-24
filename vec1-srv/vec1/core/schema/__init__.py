@@ -9,12 +9,12 @@ from vec1.core.schema.pr import (
 from vec1.core.schema.queue import QueueMessage
 
 __all__ = [
-    'PRIdentifier',
-    'PRMetadata',
-    'PRDiff',
-    'PRReviewComment',
-    'FetchedPR',
-    'ChunkType',
-    'Chunk',
-    'QueueMessage',
+    "PRIdentifier",
+    "PRMetadata",
+    "PRDiff",
+    "PRReviewComment",
+    "FetchedPR",
+    "ChunkType",
+    "Chunk",
+    "QueueMessage",
 ]

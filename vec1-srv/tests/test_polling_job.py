@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from vec1.core.jobs.polling import PollingJob
 from vec1.core.schema.pr import (
@@ -15,29 +14,29 @@ from tests.fakes import FakeClock, FakeLogger, FakePRSource, FakeQueue
 def _make_fetched_pr(
     pr_number: int,
     merged_at: datetime,
-    title: str = 'Test PR',
+    title: str = "Test PR",
 ) -> FetchedPR:
     identifier = PRIdentifier(
-        source='github',
-        owner='test-owner',
-        repo='test-repo',
+        source="github",
+        owner="test-owner",
+        repo="test-repo",
         pr_number=pr_number,
     )
     metadata = PRMetadata(
         identifier=identifier,
         title=title,
-        description='Test description',
-        author='test-author',
+        description="Test description",
+        author="test-author",
         created_at=merged_at - timedelta(hours=1),
         merged_at=merged_at,
-        base_branch='main',
-        head_branch='feature',
-        files_changed=('file1.py',),
+        base_branch="main",
+        head_branch="feature",
+        files_changed=("file1.py",),
     )
     diffs = (
         PRDiff(
-            file_path='file1.py',
-            patch='@@ -1 +1 @@\n-old\n+new',
+            file_path="file1.py",
+            patch="@@ -1 +1 @@\n-old\n+new",
             additions=1,
             deletions=1,
         ),
@@ -79,8 +78,8 @@ class TestPollingJobSetup:
         )
         job.setup()
 
-        info_records = [r for r in logger.records if r[0] == 'info']
-        assert any('Polling initialized' in r[1] for r in info_records)
+        info_records = [r for r in logger.records if r[0] == "info"]
+        assert any("Polling initialized" in r[1] for r in info_records)
 
     def test_setup_uses_default_lookback_when_no_state(self) -> None:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -101,8 +100,8 @@ class TestPollingJobSetup:
         )
         job.setup()
 
-        info_records = [r for r in logger.records if r[0] == 'info']
-        assert any('Polling initialized' in r[1] for r in info_records)
+        info_records = [r for r in logger.records if r[0] == "info"]
+        assert any("Polling initialized" in r[1] for r in info_records)
 
 
 class TestPollingJobExecuteOnce:
@@ -177,8 +176,8 @@ class TestPollingJobExecuteOnce:
         job.setup()
         job.execute_once()
 
-        info_records = [r for r in logger.records if r[0] == 'info']
-        assert any('Polling cycle complete' in r[1] for r in info_records)
+        info_records = [r for r in logger.records if r[0] == "info"]
+        assert any("Polling cycle complete" in r[1] for r in info_records)
 
 
 class TestPollingJobTeardown:
@@ -215,9 +214,9 @@ class TestPollingJobMultiplePRs:
         merged3 = datetime(2024, 1, 15, 11, 0, 0, tzinfo=timezone.utc)
 
         prs = [
-            _make_fetched_pr(1, merged1, 'PR 1'),
-            _make_fetched_pr(2, merged2, 'PR 2'),
-            _make_fetched_pr(3, merged3, 'PR 3'),
+            _make_fetched_pr(1, merged1, "PR 1"),
+            _make_fetched_pr(2, merged2, "PR 2"),
+            _make_fetched_pr(3, merged3, "PR 3"),
         ]
         clock = FakeClock(now)
         logger = FakeLogger()

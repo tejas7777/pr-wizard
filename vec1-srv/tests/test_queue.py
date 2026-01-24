@@ -13,7 +13,7 @@ class TestMemoryQueuePut:
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
 
-        queue.put('test-item')
+        queue.put("test-item")
 
         assert queue.size() == 1
 
@@ -22,9 +22,9 @@ class TestMemoryQueuePut:
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
 
-        queue.put('item-1')
-        queue.put('item-2')
-        queue.put('item-3')
+        queue.put("item-1")
+        queue.put("item-2")
+        queue.put("item-3")
 
         assert queue.size() == 3
 
@@ -33,11 +33,11 @@ class TestMemoryQueuePut:
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock, max_size=2)
 
-        queue.put('item-1')
-        queue.put('item-2')
+        queue.put("item-1")
+        queue.put("item-2")
 
         with pytest.raises(QueueFullError):
-            queue.put('item-3')
+            queue.put("item-3")
 
 
 class TestMemoryQueueGet:
@@ -45,20 +45,20 @@ class TestMemoryQueueGet:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
 
         message = queue.get()
 
         assert message is not None
-        assert message.payload == 'test-item'
+        assert message.payload == "test-item"
         assert message.attempt_count == 1
 
     def test_get_returns_none_when_empty(self) -> None:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
-        queue: MemoryQueue[str] = MemoryQueue(clock)
+        queue: MemoryQueue[str] = MemoryQueue(clock, timeout=0.01)
 
-        message = queue.get(timeout=0.01)
+        message = queue.get()
 
         assert message is None
 
@@ -66,23 +66,23 @@ class TestMemoryQueueGet:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('first')
-        queue.put('second')
-        queue.put('third')
+        queue.put("first")
+        queue.put("second")
+        queue.put("third")
 
         msg1 = queue.get()
         msg2 = queue.get()
         msg3 = queue.get()
 
-        assert msg1 is not None and msg1.payload == 'first'
-        assert msg2 is not None and msg2.payload == 'second'
-        assert msg3 is not None and msg3.payload == 'third'
+        assert msg1 is not None and msg1.payload == "first"
+        assert msg2 is not None and msg2.payload == "second"
+        assert msg3 is not None and msg3.payload == "third"
 
     def test_get_increments_attempt_count(self) -> None:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
 
         message = queue.get()
 
@@ -95,7 +95,7 @@ class TestMemoryQueueAck:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None
@@ -109,7 +109,7 @@ class TestMemoryQueueNack:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None
@@ -118,13 +118,13 @@ class TestMemoryQueueNack:
         assert queue.size() == 1
         requeued = queue.get()
         assert requeued is not None
-        assert requeued.payload == 'test-item'
+        assert requeued.payload == "test-item"
 
     def test_nack_without_requeue_discards_item(self) -> None:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None
@@ -138,7 +138,7 @@ class TestMemoryQueueMessageMetadata:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
 
         message = queue.get()
 
@@ -149,8 +149,8 @@ class TestMemoryQueueMessageMetadata:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: MemoryQueue[str] = MemoryQueue(clock)
-        queue.put('item-1')
-        queue.put('item-2')
+        queue.put("item-1")
+        queue.put("item-2")
 
         msg1 = queue.get()
         msg2 = queue.get()
@@ -165,7 +165,7 @@ class TestFakeQueuePut:
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
 
-        queue.put('test-item')
+        queue.put("test-item")
 
         assert queue.size() == 1
 
@@ -174,10 +174,10 @@ class TestFakeQueuePut:
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock, max_size=1)
 
-        queue.put('item-1')
+        queue.put("item-1")
 
         with pytest.raises(QueueFullError):
-            queue.put('item-2')
+            queue.put("item-2")
 
 
 class TestFakeQueueGet:
@@ -185,12 +185,12 @@ class TestFakeQueueGet:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
 
         message = queue.get()
 
         assert message is not None
-        assert message.payload == 'test-item'
+        assert message.payload == "test-item"
 
     def test_get_returns_none_when_empty(self) -> None:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -205,14 +205,14 @@ class TestFakeQueueGet:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
-        queue.put('first')
-        queue.put('second')
+        queue.put("first")
+        queue.put("second")
 
         msg1 = queue.get()
         msg2 = queue.get()
 
-        assert msg1 is not None and msg1.payload == 'first'
-        assert msg2 is not None and msg2.payload == 'second'
+        assert msg1 is not None and msg1.payload == "first"
+        assert msg2 is not None and msg2.payload == "second"
 
 
 class TestFakeQueueAckNack:
@@ -220,7 +220,7 @@ class TestFakeQueueAckNack:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None
@@ -232,7 +232,7 @@ class TestFakeQueueAckNack:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None
@@ -244,7 +244,7 @@ class TestFakeQueueAckNack:
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         clock = FakeClock(now)
         queue: FakeQueue[str] = FakeQueue(clock)
-        queue.put('test-item')
+        queue.put("test-item")
         message = queue.get()
 
         assert message is not None

@@ -16,8 +16,7 @@ class BaseChunker(ABC):
         self._token_counter = token_counter
 
     @abstractmethod
-    def chunk(self, fetched_pr: FetchedPR) -> Iterator[Chunk]:
-        ...
+    def chunk(self, fetched_pr: FetchedPR) -> Iterator[Chunk]: ...
 
     def _make_chunk(
         self,
