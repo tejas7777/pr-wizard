@@ -73,7 +73,6 @@ def main() -> None:
             input_queue=fetched_pr_queue,
             output_queue=chunk_queue,
             chunkers=chunkers,
-            get_timeout=settings.jobs.chunk_get_timeout,
         )
         _run_jobs(logger, polling_job, chunking_job)
 
