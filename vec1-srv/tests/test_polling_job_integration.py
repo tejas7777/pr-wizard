@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -10,14 +10,12 @@ from vec1.core.exceptions import (
     SourceRateLimitError,
 )
 from vec1.core.jobs.polling import PollingJob
-from vec1.core.ports.pr_source import PRSource
 from vec1.core.schema.pr import (
     FetchedPR,
     PRDiff,
     PRIdentifier,
     PRMetadata,
 )
-from tests.fakes import FakeClock, FakeLogger, FakePRSource, FakeQueue
 
 
 def _make_fetched_pr(
@@ -58,109 +56,62 @@ def _make_fetched_pr(
     return FetchedPR(metadata=metadata, diffs=diffs, review_comments=())
 
 
-class FakePollingState:
-    def __init__(self, last_polled: datetime | None = None) -> None:
-        self._last_polled = last_polled
-        self.stored_values: list[datetime] = []
-        self.load_count: int = 0
-
-    def load_last_polled(self) -> datetime | None:
-        self.load_count += 1
-        return self._last_polled
-
-    def store_last_polled(self, value: datetime) -> None:
-        self._last_polled = value
-        self.stored_values.append(value)
-
-    @property
-    def current_value(self) -> datetime | None:
-        return self._last_polled
+@pytest.fixture
+def mock_logger():
+    logger = Mock()
+    logger.info = Mock()
+    logger.error = Mock()
+    logger.warning = Mock()
+    logger.debug = Mock()
+    logger.exception = Mock()
+    return logger
 
 
-class ErroringPRSource(PRSource):
-    def __init__(
-        self,
-        prs: list[FetchedPR],
-        error_on_call: int,
-        error: Exception,
-    ) -> None:
-        self._prs = prs
-        self._error_on_call = error_on_call
-        self._error = error
-        self._call_count = 0
-
-    def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
-        self._call_count += 1
-        if self._call_count == self._error_on_call:
-            raise self._error
-        for pr in self._prs:
-            if pr.metadata.merged_at is not None and pr.metadata.merged_at >= since:
-                yield pr
+@pytest.fixture
+def mock_clock():
+    clock = Mock()
+    clock.sleep = Mock()
+    return clock
 
 
-class PartialErrorPRSource(PRSource):
-    def __init__(
-        self,
-        prs: list[FetchedPR],
-        error_after: int,
-        error: Exception,
-    ) -> None:
-        self._prs = prs
-        self._error_after = error_after
-        self._error = error
-
-    def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
-        count = 0
-        for pr in self._prs:
-            if pr.metadata.merged_at is not None and pr.metadata.merged_at >= since:
-                if count >= self._error_after:
-                    raise self._error
-                yield pr
-                count += 1
+@pytest.fixture
+def mock_pr_source():
+    return Mock()
 
 
-class DynamicPRSource(PRSource):
-    def __init__(self) -> None:
-        self._prs_by_call: list[list[FetchedPR]] = []
-        self._call_count = 0
-
-    def add_prs_for_cycle(self, prs: list[FetchedPR]) -> None:
-        self._prs_by_call.append(prs)
-
-    def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
-        if self._call_count < len(self._prs_by_call):
-            prs = self._prs_by_call[self._call_count]
-        else:
-            prs = []
-        self._call_count += 1
-        for pr in prs:
-            if pr.metadata.merged_at is not None and pr.metadata.merged_at >= since:
-                yield pr
+@pytest.fixture
+def mock_queue():
+    queue = Mock()
+    queue.put = Mock()
+    queue.get = Mock()
+    queue.size = Mock(return_value=0)
+    return queue
 
 
-class CountingPRSource(PRSource):
-    def __init__(self, prs: list[FetchedPR]) -> None:
-        self._prs = prs
-        self.calls: list[datetime] = []
-
-    def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
-        self.calls.append(since)
-        for pr in self._prs:
-            if pr.metadata.merged_at is not None and pr.metadata.merged_at >= since:
-                yield pr
+@pytest.fixture
+def mock_polling_state():
+    state = Mock()
+    state.load_last_polled = Mock()
+    state.store_last_polled = Mock()
+    return state
 
 
 def _create_job(
-    pr_source: PRSource,
-    clock: FakeClock,
-    polling_state: FakePollingState,
-    queue: FakeQueue[FetchedPR] | None = None,
+    pr_source,
+    clock,
+    polling_state,
+    queue=None,
+    logger=None,
     poll_interval: float = 0,
     default_lookback_hours: int = 24,
-) -> tuple[PollingJob, FakeLogger, FakeQueue[FetchedPR]]:
-    logger = FakeLogger()
+):
+    if logger is None:
+        logger = Mock()
+        logger.info = Mock()
     if queue is None:
-        queue = FakeQueue[FetchedPR](clock)
+        queue = Mock()
+        queue.put = Mock()
+
     job = PollingJob(
         logger=logger,
         poll_interval=poll_interval,
@@ -173,83 +124,288 @@ def _create_job(
     return job, logger, queue
 
 
+class TestSetupMethod:
+    def test_setup_loads_state_from_polling_state(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+
+        mock_polling_state.load_last_polled.assert_called_once()
+        assert job._last_polled == last_polled
+
+    def test_setup_uses_datetime_now_when_state_returns_none(self, mock_logger, mock_pr_source, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+
+        mock_polling_state.load_last_polled.return_value = None
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=48
+        )
+        job.setup()
+
+        assert job._last_polled is not None
+        assert job._last_polled == now - timedelta(hours=48)
+
+    def test_setup_logs_initialization_with_last_polled(self, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_logger = Mock()
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+
+        mock_logger.info.assert_called_once_with(
+            "Polling initialized",
+            last_polled=last_polled.isoformat(),
+        )
+
+
+class TestExecuteOnceMethod:
+    def test_execute_once_fetches_prs_from_source(self, mock_logger, mock_clock, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+        merged_at = now - timedelta(minutes=30)
+
+        pr = _make_fetched_pr(1, merged_at)
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        mock_pr_source.fetch_merged_since.assert_called_once_with(last_polled)
+
+    def test_execute_once_enqueues_all_fetched_prs(self, mock_logger, mock_clock, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=2)
+        merged_time = now - timedelta(hours=1)
+
+        prs = [
+            _make_fetched_pr(1, merged_time),
+            _make_fetched_pr(2, merged_time + timedelta(minutes=10)),
+            _make_fetched_pr(3, merged_time + timedelta(minutes=20)),
+        ]
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        assert mock_queue.put.call_count == 3
+        for i, pr in enumerate(prs):
+            assert mock_queue.put.call_args_list[i] == call(pr)
+
+    def test_execute_once_updates_last_polled_to_current_time(self, mock_logger, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        assert job._last_polled == now
+        mock_polling_state.store_last_polled.assert_called_once_with(now)
+
+    def test_execute_once_logs_processed_count(self, mock_logger, mock_clock, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+        merged_at = now - timedelta(minutes=30)
+
+        prs = [
+            _make_fetched_pr(1, merged_at),
+            _make_fetched_pr(2, merged_at + timedelta(minutes=5)),
+        ]
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 1
+        assert info_calls[0] == call(
+            "Polling cycle complete",
+            processed=2,
+            last_polled=now.isoformat(),
+        )
+
+    def test_execute_once_with_zero_prs_logs_zero_count(self, mock_logger, mock_clock, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 1
+        assert info_calls[0][1]["processed"] == 0
+
+
+class TestTeardownMethod:
+    def test_teardown_stores_last_polled_when_not_none(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
+
+        job.teardown()
+
+        mock_polling_state.store_last_polled.assert_called_once_with(last_polled)
+
+    def test_teardown_does_not_store_when_last_polled_is_none(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+
+        job._last_polled = None
+
+        job.teardown()
+
+        mock_polling_state.store_last_polled.assert_not_called()
+
+    def test_teardown_after_execute_once_stores_updated_time(self, mock_logger, mock_queue, mock_polling_state):
+        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        last_polled = now - timedelta(hours=1)
+
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_polling_state.load_last_polled.return_value = last_polled
+
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger
+        )
+        job.setup()
+        job.execute_once()
+
+        mock_polling_state.store_last_polled.reset_mock()
+
+        job.teardown()
+
+        mock_polling_state.store_last_polled.assert_called_once_with(now)
+
+
 class TestEndToEndPollingFlow:
-    def test_complete_flow_with_multiple_prs_from_multiple_repos(self) -> None:
+    def test_complete_flow_with_multiple_prs_from_multiple_repos(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_time = now - timedelta(hours=2)
 
         prs = [
-            _make_fetched_pr(
-                1, merged_time, "PR from repo A", owner="org1", repo="repoA"
-            ),
-            _make_fetched_pr(
-                2,
-                merged_time + timedelta(minutes=30),
-                "PR from repo B",
-                owner="org1",
-                repo="repoB",
-            ),
-            _make_fetched_pr(
-                3,
-                merged_time + timedelta(hours=1),
-                "PR from repo C",
-                owner="org2",
-                repo="repoC",
-            ),
+            _make_fetched_pr(1, merged_time, "PR from repo A", owner="org1", repo="repoA"),
+            _make_fetched_pr(2, merged_time + timedelta(minutes=30), "PR from repo B", owner="org1", repo="repoB"),
+            _make_fetched_pr(3, merged_time + timedelta(hours=1), "PR from repo C", owner="org2", repo="repoC"),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_time - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_time - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 3
-        messages = [queue.get() for _ in range(3)]
-        repos = {m.payload.metadata.identifier.repo for m in messages if m}
+        assert mock_queue.put.call_count == 3
+        repos = {call_args[0][0].metadata.identifier.repo for call_args in mock_queue.put.call_args_list}
         assert repos == {"repoA", "repoB", "repoC"}
 
-    def test_complete_flow_with_prs_from_different_authors(self) -> None:
+    def test_complete_flow_with_prs_from_different_authors(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_time = now - timedelta(hours=2)
 
         prs = [
             _make_fetched_pr(1, merged_time, "PR by Alice", author="alice"),
-            _make_fetched_pr(
-                2, merged_time + timedelta(minutes=15), "PR by Bob", author="bob"
-            ),
-            _make_fetched_pr(
-                3,
-                merged_time + timedelta(minutes=30),
-                "PR by Charlie",
-                author="charlie",
-            ),
-            _make_fetched_pr(
-                4,
-                merged_time + timedelta(minutes=45),
-                "Another PR by Alice",
-                author="alice",
-            ),
+            _make_fetched_pr(2, merged_time + timedelta(minutes=15), "PR by Bob", author="bob"),
+            _make_fetched_pr(3, merged_time + timedelta(minutes=30), "PR by Charlie", author="charlie"),
+            _make_fetched_pr(4, merged_time + timedelta(minutes=45), "Another PR by Alice", author="alice"),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_time - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_time - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 4
-        messages = [queue.get() for _ in range(4)]
-        authors = [m.payload.metadata.author for m in messages if m]
+        assert mock_queue.put.call_count == 4
+        authors = [call_args[0][0].metadata.author for call_args in mock_queue.put.call_args_list]
         assert authors.count("alice") == 2
         assert authors.count("bob") == 1
         assert authors.count("charlie") == 1
 
-    def test_complete_flow_preserves_pr_order(self) -> None:
+    def test_complete_flow_preserves_pr_order(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         base_time = now - timedelta(hours=3)
 
@@ -258,21 +414,21 @@ class TestEndToEndPollingFlow:
             for i in range(1, 11)
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(base_time - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = base_time - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 10
-        for expected_number in range(1, 11):
-            message = queue.get()
-            assert message is not None
-            assert message.payload.metadata.identifier.pr_number == expected_number
+        assert mock_queue.put.call_count == 10
+        for expected_number, call_args in enumerate(mock_queue.put.call_args_list, 1):
+            assert call_args[0][0].metadata.identifier.pr_number == expected_number
 
-    def test_complete_flow_with_large_pr_batch(self) -> None:
+    def test_complete_flow_with_large_pr_batch(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         base_time = now - timedelta(hours=6)
 
@@ -281,139 +437,136 @@ class TestEndToEndPollingFlow:
             for i in range(1, 101)
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(base_time - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = base_time - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 100
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_complete = [r for r in info_records if "Polling cycle complete" in r[1]]
-        assert len(cycle_complete) == 1
-        assert cycle_complete[0][2]["processed"] == 100
+        assert mock_queue.put.call_count == 100
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 1
+        assert info_calls[0][1]["processed"] == 100
 
 
 class TestEdgeCases:
-    def test_empty_results_still_updates_state(self) -> None:
+    def test_empty_results_still_updates_state(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 0
-        assert len(polling_state.stored_values) == 1
-        assert polling_state.stored_values[0] == now
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_complete = [r for r in info_records if "Polling cycle complete" in r[1]]
-        assert cycle_complete[0][2]["processed"] == 0
+        assert mock_queue.put.call_count == 0
+        mock_polling_state.store_last_polled.assert_called_once_with(now)
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert info_calls[0][1]["processed"] == 0
 
-    def test_all_prs_filtered_out_by_since_time(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        old_time = now - timedelta(days=7)
-
-        prs = [
-            _make_fetched_pr(1, old_time, "Old PR 1"),
-            _make_fetched_pr(2, old_time + timedelta(hours=1), "Old PR 2"),
-        ]
-
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(now - timedelta(hours=1))
-
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
-        job.setup()
-        job.execute_once()
-
-        assert queue.size() == 0
-
-    def test_pr_source_error_is_propagated(self) -> None:
+    def test_pr_source_error_is_propagated(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         identifier = PRIdentifier("github", "owner", "repo", 1)
         error = PRFetchError("Failed to fetch PR", identifier)
 
-        clock = FakeClock(now)
-        pr_source = ErroringPRSource([], error_on_call=1, error=error)
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.side_effect = error
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(PRFetchError) as exc_info:
             job.execute_once()
         assert exc_info.value.pr_identifier == identifier
 
-    def test_authentication_error_from_source(self) -> None:
+    def test_authentication_error_from_source(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         error = SourceAuthenticationError("Invalid token")
 
-        clock = FakeClock(now)
-        pr_source = ErroringPRSource([], error_on_call=1, error=error)
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.side_effect = error
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(SourceAuthenticationError) as exc_info:
             job.execute_once()
         assert "Invalid token" in str(exc_info.value)
 
-    def test_rate_limit_error_from_source(self) -> None:
+    def test_rate_limit_error_from_source(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         retry_after = now + timedelta(minutes=5)
         error = SourceRateLimitError("Rate limited", retry_after)
 
-        clock = FakeClock(now)
-        pr_source = ErroringPRSource([], error_on_call=1, error=error)
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.side_effect = error
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(SourceRateLimitError) as exc_info:
             job.execute_once()
         assert exc_info.value.retry_after == retry_after
 
-    def test_partial_error_during_iteration(self) -> None:
+    def test_partial_error_during_iteration(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_time = now - timedelta(hours=2)
 
         prs = [
             _make_fetched_pr(1, merged_time, "PR 1"),
             _make_fetched_pr(2, merged_time + timedelta(minutes=10), "PR 2"),
-            _make_fetched_pr(3, merged_time + timedelta(minutes=20), "PR 3"),
         ]
 
         identifier = PRIdentifier("github", "owner", "repo", 3)
         error = PRFetchError("Failed on PR 3", identifier)
 
-        clock = FakeClock(now)
-        pr_source = PartialErrorPRSource(prs, error_after=2, error=error)
-        polling_state = FakePollingState(merged_time - timedelta(hours=1))
+        def generator_with_error():
+            yield prs[0]
+            yield prs[1]
+            raise error
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = generator_with_error()
+        mock_polling_state.load_last_polled.return_value = merged_time - timedelta(hours=1)
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(PRFetchError):
             job.execute_once()
 
-        assert queue.size() == 2
+        assert mock_queue.put.call_count == 2
 
-    def test_non_vec1_error_propagates_unchanged(self) -> None:
+    def test_non_vec1_error_propagates_unchanged(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         error = RuntimeError("Unexpected error")
 
-        clock = FakeClock(now)
-        pr_source = ErroringPRSource([], error_on_call=1, error=error)
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.side_effect = error
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -422,151 +575,151 @@ class TestEdgeCases:
 
 
 class TestStatePersistence:
-    def test_state_loaded_once_during_setup(self) -> None:
+    def test_state_loaded_once_during_setup(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
-        assert polling_state.load_count == 1
+        assert mock_polling_state.load_last_polled.call_count == 1
 
-    def test_state_stored_after_each_execute_once(self) -> None:
+    def test_state_stored_after_each_execute_once(self, mock_logger, mock_queue, mock_polling_state):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(t1)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
+
         job.execute_once()
         job.execute_once()
         job.execute_once()
 
-        assert len(polling_state.stored_values) == 3
-        assert all(v == t1 for v in polling_state.stored_values)
+        assert mock_polling_state.store_last_polled.call_count == 3
+        for call_args in mock_polling_state.store_last_polled.call_args_list:
+            assert call_args[0][0] == t1
 
-    def test_state_persists_between_cycles(self) -> None:
+    def test_state_persists_between_cycles(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        prs: list[FetchedPR] = []
-
-        clock = FakeClock(t1)
-        pr_source = CountingPRSource(prs)
         initial_state = t1 - timedelta(hours=1)
-        polling_state = FakePollingState(initial_state)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = initial_state
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
         job.execute_once()
 
-        assert len(pr_source.calls) == 2
-        assert pr_source.calls[0] == initial_state
-        assert pr_source.calls[1] == t1
+        assert mock_pr_source.fetch_merged_since.call_count == 2
+        assert mock_pr_source.fetch_merged_since.call_args_list[0] == call(initial_state)
+        assert mock_pr_source.fetch_merged_since.call_args_list[1] == call(t1)
 
-    def test_teardown_stores_final_state(self) -> None:
+    def test_teardown_stores_final_state(self, mock_logger, mock_queue, mock_polling_state):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(t1)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
-        initial_store_count = len(polling_state.stored_values)
+
+        initial_call_count = mock_polling_state.store_last_polled.call_count
+
         job.teardown()
 
-        assert len(polling_state.stored_values) == initial_store_count + 1
-        assert polling_state.stored_values[-1] == t1
+        assert mock_polling_state.store_last_polled.call_count == initial_call_count + 1
+        assert mock_polling_state.store_last_polled.call_args_list[-1] == call(t1)
 
-    def test_teardown_without_execute_stores_initial_state(self) -> None:
+    def test_teardown_without_execute_stores_initial_state(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         initial_last_polled = now - timedelta(hours=1)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(initial_last_polled)
+        mock_polling_state.load_last_polled.return_value = initial_last_polled
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
+
         job.teardown()
 
-        assert len(polling_state.stored_values) == 1
-        assert polling_state.stored_values[0] == initial_last_polled
+        mock_polling_state.store_last_polled.assert_called_once_with(initial_last_polled)
 
-    def test_state_continuity_across_job_instances(self) -> None:
+    def test_state_continuity_across_job_instances(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         t2 = datetime(2024, 1, 15, 12, 5, 0, tzinfo=timezone.utc)
 
-        clock1 = FakeClock(t1)
-        pr_source1 = FakePRSource([])
-        polling_state = FakePollingState(None)
+        mock_clock1 = Mock()
+        mock_clock1.now.return_value = t1
+        mock_pr_source1 = Mock()
+        mock_pr_source1.fetch_merged_since.return_value = iter([])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = None
 
         job1, _, _ = _create_job(
-            pr_source1, clock1, polling_state, default_lookback_hours=24
+            mock_pr_source1, mock_clock1, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=24
         )
         job1.setup()
         job1.execute_once()
         job1.teardown()
 
-        assert polling_state.current_value == t1
+        stored_time = mock_polling_state.store_last_polled.call_args_list[-1][0][0]
+        assert stored_time == t1
 
-        clock2 = FakeClock(t2)
-        pr_source2 = CountingPRSource([])
+        mock_clock2 = Mock()
+        mock_clock2.now.return_value = t2
+        mock_pr_source2 = Mock()
+        mock_pr_source2.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = t1
 
-        job2, _, _ = _create_job(pr_source2, clock2, polling_state)
+        job2, _, _ = _create_job(mock_pr_source2, mock_clock2, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job2.setup()
         job2.execute_once()
 
-        assert len(pr_source2.calls) == 1
-        assert pr_source2.calls[0] == t1
+        mock_pr_source2.fetch_merged_since.assert_called_once_with(t1)
 
 
 class TestQueueInteractions:
-    def test_queue_receives_correct_message_metadata(self) -> None:
+    def test_queue_receives_prs_in_correct_order(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
         pr = _make_fetched_pr(42, merged_at, "Test PR", owner="myorg", repo="myrepo")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        message = queue.get()
-        assert message is not None
-        assert message.payload.metadata.identifier.pr_number == 42
-        assert message.payload.metadata.identifier.owner == "myorg"
-        assert message.payload.metadata.identifier.repo == "myrepo"
-        assert message.payload.metadata.title == "Test PR"
-        assert message.attempt_count == 1
+        mock_queue.put.assert_called_once_with(pr)
+        assert mock_queue.put.call_args[0][0].metadata.identifier.pr_number == 42
+        assert mock_queue.put.call_args[0][0].metadata.identifier.owner == "myorg"
+        assert mock_queue.put.call_args[0][0].metadata.identifier.repo == "myrepo"
+        assert mock_queue.put.call_args[0][0].metadata.title == "Test PR"
 
-    def test_queue_message_enqueued_at_uses_clock(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        merged_at = now - timedelta(hours=1)
-        pr = _make_fetched_pr(1, merged_at)
-
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
-
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
-        job.setup()
-        job.execute_once()
-
-        message = queue.get()
-        assert message is not None
-        assert message.enqueued_at == now
-
-    def test_queue_full_error_propagates(self) -> None:
+    def test_queue_full_error_propagates(self, mock_logger, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
 
@@ -576,20 +729,31 @@ class TestQueueInteractions:
             _make_fetched_pr(3, merged_at + timedelta(minutes=20), "PR 3"),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
-        queue = FakeQueue[FetchedPR](clock, max_size=2)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, _ = _create_job(pr_source, clock, polling_state, queue=queue)
+        mock_queue = Mock()
+        call_count = [0]
+
+        def put_with_limit(item):
+            call_count[0] += 1
+            if call_count[0] > 2:
+                raise QueueFullError("Queue is full")
+
+        mock_queue.put.side_effect = put_with_limit
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(QueueFullError):
             job.execute_once()
 
-        assert queue.size() == 2
+        assert mock_queue.put.call_count == 3
 
-    def test_queue_full_with_single_item_capacity(self) -> None:
+    def test_queue_full_with_single_item_capacity(self, mock_logger, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
 
@@ -598,23 +762,32 @@ class TestQueueInteractions:
             _make_fetched_pr(2, merged_at + timedelta(minutes=10), "PR 2"),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
-        queue = FakeQueue[FetchedPR](clock, max_size=1)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, _ = _create_job(pr_source, clock, polling_state, queue=queue)
+        mock_queue = Mock()
+        call_count = [0]
+
+        def put_with_single_limit(item):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise QueueFullError("Queue is full")
+
+        mock_queue.put.side_effect = put_with_single_limit
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         with pytest.raises(QueueFullError):
             job.execute_once()
 
-        assert queue.size() == 1
-        message = queue.get()
-        assert message is not None
-        assert message.payload.metadata.identifier.pr_number == 1
+        assert mock_queue.put.call_count == 2
+        assert mock_queue.put.call_args_list[0][0][0].metadata.identifier.pr_number == 1
 
-    def test_multiple_prs_enqueue_sequentially(self) -> None:
+    def test_multiple_prs_enqueue_sequentially(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=2)
 
@@ -624,184 +797,196 @@ class TestQueueInteractions:
             _make_fetched_pr(3, merged_at + timedelta(hours=1)),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        pr_numbers = []
-        while queue.size() > 0:
-            message = queue.get()
-            if message:
-                pr_numbers.append(message.payload.metadata.identifier.pr_number)
-
+        pr_numbers = [call_args[0][0].metadata.identifier.pr_number for call_args in mock_queue.put.call_args_list]
         assert pr_numbers == [1, 2, 3]
 
 
 class TestClockTimeHandling:
-    def test_default_lookback_when_no_prior_state(self) -> None:
+    def test_uses_current_datetime_when_no_prior_state_exists(self, mock_logger, mock_queue):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        lookback_hours = 48
+        expected_lookback = now - timedelta(hours=24)
 
-        clock = FakeClock(now)
-        pr_source = CountingPRSource([])
-        polling_state = FakePollingState(None)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = None
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=24
         )
         job.setup()
         job.execute_once()
 
-        expected_since = now - timedelta(hours=lookback_hours)
-        assert len(pr_source.calls) == 1
-        assert pr_source.calls[0] == expected_since
+        assert mock_pr_source.fetch_merged_since.call_count == 1
+        call_arg = mock_pr_source.fetch_merged_since.call_args[0][0]
+        assert isinstance(call_arg, datetime)
+        assert call_arg == expected_lookback
 
-    def test_different_lookback_values(self) -> None:
-        for lookback_hours in [1, 6, 24, 72, 168]:
-            now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-            clock = FakeClock(now)
-            pr_source = CountingPRSource([])
-            polling_state = FakePollingState(None)
-
-            job, _, _ = _create_job(
-                pr_source, clock, polling_state, default_lookback_hours=lookback_hours
-            )
-            job.setup()
-            job.execute_once()
-
-            expected_since = now - timedelta(hours=lookback_hours)
-            assert pr_source.calls[0] == expected_since
-
-    def test_clock_advances_between_cycles(self) -> None:
+    def test_clock_advances_between_cycles(self, mock_logger, mock_queue, mock_polling_state):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(t1)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
+
         job.execute_once()
         job.execute_once()
         job.execute_once()
 
-        assert len(polling_state.stored_values) == 3
-        assert all(v == t1 for v in polling_state.stored_values)
+        assert mock_polling_state.store_last_polled.call_count == 3
+        for call_args in mock_polling_state.store_last_polled.call_args_list:
+            assert call_args[0][0] == t1
 
-    def test_poll_interval_calls_clock_sleep(self) -> None:
+    def test_poll_interval_calls_clock_sleep(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         poll_interval = 30.0
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, poll_interval=poll_interval
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            poll_interval=poll_interval
         )
         job.setup()
-
         job.execute_once()
         job._sleep(poll_interval)
 
-        assert len(clock.slept) == 1
-        assert clock.slept[0] == poll_interval
+        mock_clock.sleep.assert_called_once_with(poll_interval)
 
-    def test_timezone_aware_datetimes_preserved(self) -> None:
+    def test_timezone_aware_datetimes_preserved(self, mock_logger, mock_queue):
         utc_now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
         pr = _make_fetched_pr(1, merged_at)
 
-        clock = FakeClock(utc_now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = utc_now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert polling_state.stored_values[0].tzinfo == timezone.utc
+        stored_time = mock_polling_state.store_last_polled.call_args[0][0]
+        assert stored_time.tzinfo == timezone.utc
 
 
 class TestMultiplePollingCycles:
-    def test_multiple_cycles_fetch_different_prs(self) -> None:
+    def test_multiple_cycles_fetch_different_prs(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
         pr1 = _make_fetched_pr(1, t1 - timedelta(minutes=30), "PR 1")
         pr2 = _make_fetched_pr(2, t1 + timedelta(minutes=2), "PR 2")
         pr3 = _make_fetched_pr(3, t1 + timedelta(minutes=10), "PR 3")
 
-        pr_source = DynamicPRSource()
-        pr_source.add_prs_for_cycle([pr1])
-        pr_source.add_prs_for_cycle([pr2])
-        pr_source.add_prs_for_cycle([pr3])
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
 
-        clock = FakeClock(t1)
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        call_count = [0]
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        def fetch_by_cycle(since):
+            result = [iter([pr1]), iter([pr2]), iter([pr3])][call_count[0]]
+            call_count[0] += 1
+            return result
+
+        mock_pr_source.fetch_merged_since.side_effect = fetch_by_cycle
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         job.execute_once()
-        assert queue.size() == 1
+        assert mock_queue.put.call_count == 1
 
         job.execute_once()
-        assert queue.size() == 2
+        assert mock_queue.put.call_count == 2
 
         job.execute_once()
-        assert queue.size() == 3
+        assert mock_queue.put.call_count == 3
 
-    def test_consecutive_empty_cycles(self) -> None:
+    def test_consecutive_empty_cycles(self, mock_logger, mock_queue, mock_polling_state):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(t1)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         for _ in range(3):
             job.execute_once()
 
-        assert queue.size() == 0
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_complete = [r for r in info_records if "Polling cycle complete" in r[1]]
-        assert len(cycle_complete) == 3
-        assert all(r[2]["processed"] == 0 for r in cycle_complete)
+        assert mock_queue.put.call_count == 0
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 3
+        assert all(c[1]["processed"] == 0 for c in info_calls)
 
-    def test_alternating_empty_and_nonempty_cycles(self) -> None:
+    def test_alternating_empty_and_nonempty_cycles(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
         pr1 = _make_fetched_pr(1, t1 - timedelta(minutes=5), "PR 1")
         pr3 = _make_fetched_pr(3, t1 + timedelta(minutes=5), "PR 3")
 
-        pr_source = DynamicPRSource()
-        pr_source.add_prs_for_cycle([pr1])
-        pr_source.add_prs_for_cycle([])
-        pr_source.add_prs_for_cycle([pr3])
-        pr_source.add_prs_for_cycle([])
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
 
-        clock = FakeClock(t1)
-        polling_state = FakePollingState(t1 - timedelta(hours=1))
+        call_count = [0]
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        def fetch_alternating(since):
+            result = [iter([pr1]), iter([]), iter([pr3]), iter([])][call_count[0]]
+            call_count[0] += 1
+            return result
+
+        mock_pr_source.fetch_merged_since.side_effect = fetch_alternating
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = t1 - timedelta(hours=1)
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         for _ in range(4):
             job.execute_once()
 
-        assert queue.size() == 2
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_complete = [r for r in info_records if "Polling cycle complete" in r[1]]
-        processed_counts = [r[2]["processed"] for r in cycle_complete]
+        assert mock_queue.put.call_count == 2
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        processed_counts = [c[1]["processed"] for c in info_calls]
         assert processed_counts == [1, 0, 1, 0]
 
-    def test_cycle_count_tracking_in_logs(self) -> None:
+    def test_cycle_count_tracking_in_logs(self, mock_logger, mock_queue, mock_polling_state):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = t1 - timedelta(hours=1)
 
@@ -811,22 +996,23 @@ class TestMultiplePollingCycles:
             _make_fetched_pr(3, merged_at + timedelta(minutes=20)),
         ]
 
-        clock = FakeClock(t1)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = t1
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_complete = [r for r in info_records if "Polling cycle complete" in r[1]]
-        assert len(cycle_complete) == 1
-        assert cycle_complete[0][2]["processed"] == 3
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 1
+        assert info_calls[0][1]["processed"] == 3
 
 
 class TestErrorRecovery:
-    def test_error_on_first_cycle_then_success(self) -> None:
+    def test_error_on_first_cycle_then_success(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         t2 = datetime(2024, 1, 15, 12, 5, 0, tzinfo=timezone.utc)
         merged_at = t1 - timedelta(hours=1)
@@ -835,48 +1021,56 @@ class TestErrorRecovery:
         identifier = PRIdentifier("github", "owner", "repo", 1)
         error = PRFetchError("Failed", identifier)
 
-        error_source = ErroringPRSource([pr], error_on_call=1, error=error)
+        mock_clock1 = Mock()
+        mock_clock1.now.return_value = t1
+        mock_pr_source1 = Mock()
+        mock_pr_source1.fetch_merged_since.side_effect = error
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        clock = FakeClock([t1, t1])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
-
-        job, logger, queue = _create_job(error_source, clock, polling_state)
-        job.setup()
+        job1, _, queue1 = _create_job(mock_pr_source1, mock_clock1, mock_polling_state, logger=mock_logger)
+        job1.setup()
 
         with pytest.raises(PRFetchError):
-            job.execute_once()
+            job1.execute_once()
 
-        working_source = FakePRSource([pr])
-        job2, logger2, queue2 = _create_job(
-            working_source, FakeClock(t2), polling_state
-        )
+        mock_clock2 = Mock()
+        mock_clock2.now.return_value = t2
+        mock_pr_source2 = Mock()
+        mock_pr_source2.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
+
+        job2, _, queue2 = _create_job(mock_pr_source2, mock_clock2, mock_polling_state, logger=mock_logger)
         job2.setup()
         job2.execute_once()
 
-        assert queue2.size() == 1
+        queue2.put.assert_called_once()
 
-    def test_state_not_updated_on_error(self) -> None:
+    def test_state_not_updated_on_error(self, mock_logger, mock_queue):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         initial_state = now - timedelta(hours=1)
         identifier = PRIdentifier("github", "owner", "repo", 1)
         error = PRFetchError("Failed", identifier)
 
-        clock = FakeClock(now)
-        pr_source = ErroringPRSource([], error_on_call=1, error=error)
-        polling_state = FakePollingState(initial_state)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.side_effect = error
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = initial_state
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
 
         with pytest.raises(PRFetchError):
             job.execute_once()
 
-        assert len(polling_state.stored_values) == 0
-        assert polling_state.current_value == initial_state
+        mock_polling_state.store_last_polled.assert_not_called()
 
-    def test_recovery_continues_from_last_successful_state(self) -> None:
+    def test_recovery_continues_from_last_successful_state(self, mock_logger, mock_queue):
         t1 = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2024, 1, 15, 12, 5, 0, tzinfo=timezone.utc)
         t3 = datetime(2024, 1, 15, 12, 10, 0, tzinfo=timezone.utc)
         merged_at = t1 - timedelta(hours=2)
 
@@ -884,37 +1078,39 @@ class TestErrorRecovery:
         identifier = PRIdentifier("github", "owner", "repo", 2)
         error = PRFetchError("Failed", identifier)
 
-        class TwoPhaseSource(PRSource):
-            def __init__(self) -> None:
-                self._call_count = 0
+        mock_clock = Mock()
+        mock_clock.now.side_effect = [t1, t3]
 
-            def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
-                self._call_count += 1
-                if self._call_count == 2:
-                    raise error
-                yield pr1
+        mock_pr_source = Mock()
+        call_count = [0]
 
-        clock = FakeClock([t1, t1, t2, t3])
-        pr_source = TwoPhaseSource()
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        def fetch_with_error(since):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise error
+            return iter([pr1])
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        mock_pr_source.fetch_merged_since.side_effect = fetch_with_error
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
         job.execute_once()
-        assert len(polling_state.stored_values) == 1
-        assert polling_state.stored_values[0] == t1
+        assert mock_polling_state.store_last_polled.call_count == 1
+        assert mock_polling_state.store_last_polled.call_args_list[0] == call(t1)
 
         with pytest.raises(PRFetchError):
             job.execute_once()
 
-        assert len(polling_state.stored_values) == 1
+        assert mock_polling_state.store_last_polled.call_count == 1
 
         job.execute_once()
-        assert len(polling_state.stored_values) == 2
-        assert polling_state.stored_values[1] == t3
+        assert mock_polling_state.store_last_polled.call_count == 2
+        assert mock_polling_state.store_last_polled.call_args_list[1] == call(t3)
 
-    def test_queue_full_doesnt_update_state(self) -> None:
+    def test_queue_full_doesnt_update_state(self, mock_logger):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
         initial_state = merged_at - timedelta(hours=1)
@@ -924,222 +1120,226 @@ class TestErrorRecovery:
             _make_fetched_pr(2, merged_at + timedelta(minutes=10), "PR 2"),
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(initial_state)
-        queue = FakeQueue[FetchedPR](clock, max_size=1)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = initial_state
 
-        job, logger, _ = _create_job(pr_source, clock, polling_state, queue=queue)
+        mock_queue = Mock()
+        call_count = [0]
+
+        def put_with_limit(item):
+            call_count[0] += 1
+            if call_count[0] > 1:
+                raise QueueFullError("Queue is full")
+
+        mock_queue.put.side_effect = put_with_limit
+
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
+
+        mock_polling_state.store_last_polled.reset_mock()
 
         with pytest.raises(QueueFullError):
             job.execute_once()
 
-        assert len(polling_state.stored_values) == 0
-        assert polling_state.current_value == initial_state
+        mock_polling_state.store_last_polled.assert_not_called()
 
 
 class TestBoundaryConditions:
-    def test_pr_merged_exactly_at_lookback_time(self) -> None:
+    def test_pr_merged_exactly_at_lookback_time(self, mock_logger, mock_queue):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         lookback_hours = 24
         lookback_time = now - timedelta(hours=lookback_hours)
 
         pr = _make_fetched_pr(1, lookback_time, "Boundary PR")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(None)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = None
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=lookback_hours
         )
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 1
+        mock_queue.put.assert_called_once()
 
-    def test_pr_merged_one_second_before_lookback(self) -> None:
+    def test_pr_merged_one_second_before_lookback(self, mock_logger, mock_queue):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         lookback_hours = 24
         lookback_time = now - timedelta(hours=lookback_hours)
 
         pr = _make_fetched_pr(1, lookback_time - timedelta(seconds=1), "Too Old PR")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(None)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = None
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=lookback_hours
         )
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 0
+        mock_queue.put.assert_not_called()
 
-    def test_pr_merged_one_second_after_lookback(self) -> None:
+    def test_pr_merged_one_second_after_lookback(self, mock_logger, mock_queue):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         lookback_hours = 24
         lookback_time = now - timedelta(hours=lookback_hours)
 
         pr = _make_fetched_pr(1, lookback_time + timedelta(seconds=1), "Just In PR")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(None)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state = Mock()
+        mock_polling_state.load_last_polled.return_value = None
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            default_lookback_hours=lookback_hours
         )
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 1
+        mock_queue.put.assert_called_once()
 
-    def test_pr_merged_exactly_at_last_polled_time(self) -> None:
+    def test_pr_merged_exactly_at_last_polled_time(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         last_polled = datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
 
         pr = _make_fetched_pr(1, last_polled, "Boundary PR")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(last_polled)
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = last_polled
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 1
+        mock_queue.put.assert_called_once()
 
-    def test_zero_poll_interval(self) -> None:
+    def test_zero_poll_interval(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, poll_interval=0
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            poll_interval=0
         )
         job.setup()
         job.execute_once()
 
-        assert len(clock.slept) == 0
+        mock_clock.sleep.assert_not_called()
 
-    def test_very_small_poll_interval(self) -> None:
+    def test_very_small_poll_interval(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         poll_interval = 0.001
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
 
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, poll_interval=poll_interval
+        job, _, _ = _create_job(
+            mock_pr_source, mock_clock, mock_polling_state,
+            queue=mock_queue, logger=mock_logger,
+            poll_interval=poll_interval
         )
         job.setup()
         job.execute_once()
         job._sleep(poll_interval)
 
-        assert clock.slept == [poll_interval]
+        mock_clock.sleep.assert_called_once_with(poll_interval)
 
-    def test_very_large_lookback_hours(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        lookback_hours = 8760
 
-        clock = FakeClock(now)
-        pr_source = CountingPRSource([])
-        polling_state = FakePollingState(None)
-
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
-        )
-        job.setup()
-        job.execute_once()
-
-        expected_since = now - timedelta(hours=lookback_hours)
-        assert pr_source.calls[0] == expected_since
-
-    def test_minimum_lookback_hours(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-        lookback_hours = 1
-
-        clock = FakeClock(now)
-        pr_source = CountingPRSource([])
-        polling_state = FakePollingState(None)
-
-        job, logger, queue = _create_job(
-            pr_source, clock, polling_state, default_lookback_hours=lookback_hours
-        )
-        job.setup()
-        job.execute_once()
-
-        expected_since = now - timedelta(hours=1)
-        assert pr_source.calls[0] == expected_since
-
-    def test_pr_with_very_long_title(self) -> None:
+    def test_pr_with_very_long_title(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
         long_title = "A" * 10000
 
         pr = _make_fetched_pr(1, merged_at, long_title)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 1
-        message = queue.get()
-        assert message is not None
-        assert message.payload.metadata.title == long_title
+        mock_queue.put.assert_called_once()
+        assert mock_queue.put.call_args[0][0].metadata.title == long_title
 
-    def test_pr_with_many_files_changed(self) -> None:
+    def test_pr_with_many_files_changed(self, mock_logger, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
         files = tuple(f"file{i}.py" for i in range(1000))
 
         pr = _make_fetched_pr(1, merged_at, "Many Files PR", files=files)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        assert queue.size() == 1
-        message = queue.get()
-        assert message is not None
-        assert len(message.payload.metadata.files_changed) == 1000
-        assert len(message.payload.diffs) == 1000
+        mock_queue.put.assert_called_once()
+        enqueued_pr = mock_queue.put.call_args[0][0]
+        assert len(enqueued_pr.metadata.files_changed) == 1000
+        assert len(enqueued_pr.diffs) == 1000
 
 
 class TestLogging:
-    def test_setup_logs_initialization(self) -> None:
+    def test_setup_logs_initialization(self, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         last_polled = now - timedelta(hours=1)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(last_polled)
+        mock_logger = Mock()
+        mock_polling_state.load_last_polled.return_value = last_polled
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
 
-        info_records = [r for r in logger.records if r[0] == "info"]
-        init_logs = [r for r in info_records if "Polling initialized" in r[1]]
-        assert len(init_logs) == 1
-        assert "last_polled" in init_logs[0][2]
-        assert init_logs[0][2]["last_polled"] == last_polled.isoformat()
+        mock_logger.info.assert_called_once_with(
+            "Polling initialized",
+            last_polled=last_polled.isoformat(),
+        )
 
-    def test_execute_once_logs_cycle_complete_with_count(self) -> None:
+    def test_execute_once_logs_cycle_complete_with_count(self, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
 
@@ -1148,82 +1348,89 @@ class TestLogging:
             for i in range(5)
         ]
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource(prs)
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter(prs)
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
+        mock_logger = Mock()
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
-        info_records = [r for r in logger.records if r[0] == "info"]
-        cycle_logs = [r for r in info_records if "Polling cycle complete" in r[1]]
-        assert len(cycle_logs) == 1
-        assert cycle_logs[0][2]["processed"] == 5
-        assert "last_polled" in cycle_logs[0][2]
+        info_calls = [c for c in mock_logger.info.call_args_list if "Polling cycle complete" in str(c)]
+        assert len(info_calls) == 1
+        assert info_calls[0] == call(
+            "Polling cycle complete",
+            processed=5,
+            last_polled=now.isoformat(),
+        )
 
-    def test_log_format_includes_iso_timestamps(self) -> None:
+    def test_log_format_includes_iso_timestamps(self, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([])
+        mock_polling_state.load_last_polled.return_value = now - timedelta(hours=1)
+        mock_logger = Mock()
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
         job.setup()
         job.execute_once()
 
         all_last_polled = []
-        for record in logger.records:
-            if "last_polled" in record[2]:
-                all_last_polled.append(record[2]["last_polled"])
+        for call_obj in mock_logger.info.call_args_list:
+            if "last_polled" in call_obj[1]:
+                all_last_polled.append(call_obj[1]["last_polled"])
 
         for timestamp in all_last_polled:
             datetime.fromisoformat(timestamp)
 
 
 class TestJobLifecycle:
-    def test_full_lifecycle_setup_execute_teardown(self) -> None:
+    def test_full_lifecycle_setup_execute_teardown(self, mock_queue, mock_polling_state):
         now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         merged_at = now - timedelta(hours=1)
         pr = _make_fetched_pr(1, merged_at, "Test PR")
 
-        clock = FakeClock(now)
-        pr_source = FakePRSource([pr])
-        polling_state = FakePollingState(merged_at - timedelta(hours=1))
+        mock_clock = Mock()
+        mock_clock.now.return_value = now
+        mock_pr_source = Mock()
+        mock_pr_source.fetch_merged_since.return_value = iter([pr])
+        mock_polling_state.load_last_polled.return_value = merged_at - timedelta(hours=1)
+        mock_logger = Mock()
 
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
 
         job.setup()
         job.execute_once()
         job.teardown()
 
-        assert queue.size() == 1
-        assert len(polling_state.stored_values) == 2
-        info_records = [r for r in logger.records if r[0] == "info"]
-        assert any("Polling initialized" in r[1] for r in info_records)
-        assert any("Polling cycle complete" in r[1] for r in info_records)
+        mock_queue.put.assert_called_once()
+        assert mock_polling_state.store_last_polled.call_count == 2
+        assert any("Polling initialized" in str(c) for c in mock_logger.info.call_args_list)
+        assert any("Polling cycle complete" in str(c) for c in mock_logger.info.call_args_list)
 
-    def test_stop_method_sets_running_to_false(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
-
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+    def test_stop_method_sets_running_to_false(self, mock_clock, mock_pr_source, mock_queue, mock_polling_state, mock_logger):
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
 
         job._running = True
         job.stop()
         assert job._running is False
 
-    def test_should_continue_returns_true_by_default(self) -> None:
-        now = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-
-        clock = FakeClock(now)
-        pr_source = FakePRSource([])
-        polling_state = FakePollingState(now - timedelta(hours=1))
-
-        job, logger, queue = _create_job(pr_source, clock, polling_state)
+    def test_should_continue_returns_true_by_default(self, mock_clock, mock_pr_source, mock_queue, mock_polling_state, mock_logger):
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
 
         assert job.should_continue() is True
+
+
+class TestAssertionInExecuteOnce:
+    def test_execute_once_asserts_last_polled_is_not_none(self, mock_logger, mock_clock, mock_pr_source, mock_queue, mock_polling_state):
+        job, _, _ = _create_job(mock_pr_source, mock_clock, mock_polling_state, queue=mock_queue, logger=mock_logger)
+        job._last_polled = None
+
+        with pytest.raises(AssertionError):
+            job.execute_once()

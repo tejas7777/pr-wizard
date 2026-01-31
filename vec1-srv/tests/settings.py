@@ -28,5 +28,5 @@ def get_test_settings() -> Settings:
             chunk_get_timeout=0.1,
             default_lookback_hours=24,
         ),
-        state=StateSettings(base_dir="/tmp/vec1-test-state"),
+        state=StateSettings(base_dir="/tmp/vec1-test-state",save_state_in_dev=True),
     )

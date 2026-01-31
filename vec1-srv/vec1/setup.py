@@ -39,7 +39,7 @@ def main() -> None:
     )
     chunk_queue = MemoryQueue[Chunk](clock, max_size=settings.queue.max_size)
     state_store = FileStateStore(settings.state.base_dir)
-    polling_state = PollingStateStore(state_store)
+    polling_state = PollingStateStore(state_store, save_state_in_dev=settings.state.save_state_in_dev )
 
     hasher: Callable[[str], str] = _hash_content
     token_counter: Callable[[str], int] = _count_tokens

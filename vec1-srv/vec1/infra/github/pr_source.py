@@ -55,6 +55,7 @@ class GitHubPRSource(PRSource):
             )
         else:
             for pr in pulls:
+                # TODO: Fix Later
                 # if pr.merged_at is None or pr.merged_at < since:
                 #     continue
                 yield self._build_fetched_pr(pr)
