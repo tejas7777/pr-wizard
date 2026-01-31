@@ -19,6 +19,7 @@ from vec1.infra import (
     configure_logfire,
 )
 
+### Test comment - test branch
 
 def _hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
