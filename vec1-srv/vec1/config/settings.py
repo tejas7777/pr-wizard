@@ -50,6 +50,10 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     github_token = _ge_env_or_default("GITHUB_TOKEN")
     github_owner = _ge_env_or_default("VEC1_REPO_OWNER")
     github_repo = _ge_env_or_default("VEC1_REPO_NAME")

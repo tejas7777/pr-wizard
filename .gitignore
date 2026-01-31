@@ -67,3 +67,9 @@ logs/
 *.local.toml
 *.local.yaml
 *.local.json
+
+# Architecture documentation (internal only)
+vec1-srv/Agent.md
+
+# vec1 state directory
+vec1-srv/.vec1/
