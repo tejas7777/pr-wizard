@@ -120,4 +120,4 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    return str(_ge_env_or_default(name, default) or "").UPPER == "TRUE"
+    return str(_ge_env_or_default(name, default) or "").upper() == "TRUE"
