@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Iterator, List
+from typing import Iterator
 
 from github import GithubException
 from github.Repository import Repository
@@ -33,13 +33,11 @@ class GitHubPRSource(PRSource):
         client: GitHubClient,
         owner: str,
         repo: str,
-        pr_status: List[str] = [STATUS_CLOSED],
     ) -> None:
         self._client = client
         self._owner = owner
         self._repo_name = repo
         self._repo: Repository | None = None
-        self._pr_status = pr_status
 
     def fetch_merged_since(self, since: datetime) -> Iterator[FetchedPR]:
         repo = self._get_repo()
@@ -57,8 +55,8 @@ class GitHubPRSource(PRSource):
             )
         else:
             for pr in pulls:
-                if pr.merged_at is None or pr.merged_at < since:
-                    continue
+                # if pr.merged_at is None or pr.merged_at < since:
+                #     continue
                 yield self._build_fetched_pr(pr)
 
     def _build_fetched_pr(self, pr) -> FetchedPR:

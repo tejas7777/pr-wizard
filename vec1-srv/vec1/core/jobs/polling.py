@@ -30,7 +30,7 @@ class PollingJob(BaseJob):
         self._last_polled: datetime | None = None
 
     def setup(self) -> None:
-        self._last_polled = self._polling_state.load_last_polled()
+        self._last_polled = self._polling_state.load_last_polled() or datetime.now()
         if self._last_polled is None:
             self._last_polled = self._clock.now() - timedelta(
                 hours=self._default_lookback_hours
